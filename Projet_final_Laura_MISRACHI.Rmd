@@ -1,0 +1,1283 @@
+---
+title: "Projet final : Analyse de données et apprentissage statistique"
+author: "Laura Misrachi"
+subtitle: Challenge data de l'ENS, Plume Labs,  "Predict air quality at the street level"
+date : "Dimanche 21 janvier 2018"
+output:
+  pdf_document: 
+    number_sections: true
+    toc: true
+  html_notebook:
+    number_sections: yes
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(fig.width= 8, fig.height = 4 )
+```
+
+
+Ce compte rendu de projet d'analyse de données porte sur un jeu de données issu d'une start-up parisienne Plume Labs qui travaille sur la prévision de la qualité de l'air et développe un capteur connecté de la qualité de l'air. Le \textbf{but} du challenge est de prédire la concentration de trois polluants $(NO_2, PM_{10}, PM_{2.5})$ à niveau de rue pour différentes villes françaises, à différents instants (heures). Les données dont nous disposons et que nous allons examiner de façon approfondie par la suite s'apparentent donc à une série temporelle.
+
+
+```{r nettoyage, echo = F, warning = F}
+rm(list=ls())
+library(FactoMineR)
+```
+
+# Importation des données
+
+On importe ici les données issues de l'ensemble d'apprentissage et de test, qui sont fournis sur le site \textit{"www.challengedata.ens.fr"}.
+
+
+```{r chargement, warning = FALSE, echo = F}
+plume_training.data <- read.csv(file = 
+"/Users/lauramisrachi/Documents/Master Maths appliqués UPMC/Statistiques - R/Rstudio/Projet final/X_train.csv")
+plume_test.data <- read.csv(file = 
+"/Users/lauramisrachi/Documents/Master Maths appliqués UPMC/Statistiques - R/Rstudio/Projet final/X_test.csv")
+plume_train_output.data <- read.csv(file = 
+"/Users/lauramisrachi/Documents/Master Maths appliqués UPMC/Statistiques - R/Rstudio/Projet final/training_output.csv")
+```
+
+# Présentation des données
+```{r chargement des donnees, warning = FALSE, echo = F}
+print("Covariables pour l'ensemble d'apprentissage")
+names(plume_training.data)
+print("Covariables pour l'ensemble de test")
+names(plume_test.data)
+print("Covariables pour le fichier réponse à soumettre pour le challenge")
+names(plume_train_output.data)
+```
+Dès maintenant, il est important de préciser que l'ensemble de test fourni par l'entreprise rassemble des données pour lesquelles nous ne connaissons absolument pas les quantités exactes à prédire. C'est un ensemble utilisé pour estimer les performances de notre modèle par les hôtes du challenge et s'assurer que les participants ne fasse pas de sur-apprentissage sur l'ensemble à tester. Il nous faudra donc par ailleurs définir un autre ensemble de test pour lequel nous pouvons effectivement tester nous-même la qualité de notre modèle. 
+
+
+D'après les observations précédentes, les deux datasets d'apprentissage et de test contiennent respectivement 33 covariables identiques. Il est intéressant de noter que chacun des deux ensembles contiennent les mêmes covariables. Aucune modification ne devra être faite à ce niveau-là pour faire correspondre les deux datasets. Nous allons désormais davantage investiguer la nature et la structure des données. 
+
+
+```{r structure des données, warning = FALSE, echo = F}
+print("Structure des données pour l'ensemble d'apprentissage")
+str(plume_training.data)
+print("Structure des données pour l'ensemble de test")
+str(plume_test.data)
+print("Structure des données pour l'ensemble solution")
+str(plume_train_output.data)
+```
+
+Il y a 448169 observations dans l'ensemble d'apprentissage et 300891 observations dans l'ensemble de test, ce qui correspond à une proportion de 60% des données en apprentissage contre 40% des données en test. Ceci semble raisonnable. 
+On remarque que la majorité des covariables sont de type numériques, ce qui nous permettra d'appliquer les techniques vues en cours. Il y a dans les ensembles de test et d'apprentissage deux covariables de type factorielles: 
+
+
+* is_calmday: variable booléenne (TRUE-FALSE) qui indique s'il s'agit d'un jour de week-end ou de vacances. 
+
+* pollutant: variable catégorielle présentant trois instances (NO2, PM10, PM2_5) qui indique le polluant considéré.
+
+
+Décrivons désormais les variables de type numériques. On peut les rassembler en trois catégories. Tout d'abord les variables de type ID ou identité:
+
+* ID: numéro de lignes du dataset (de 0 à 448168)
+
+* daytime: valeur arbitraire qui décrit l’ordre temporel des données (un incrément de 1 correspond à 1h)
+
+* zone_id: valeurs entre 0 et 5 qui correspondent à une ville donnée
+
+* station_id: valeurs qui appartiennent à [ 16., 17., 20., 1., 18., 22., 26., 28., 6., 9., 25.,
+4., 10., 23., 5., 8., 11.]. Une station est liée à une zone_id. Plusieurs stations peuvent être liées à une même zone_id. On peut le comprendre comme un lieu de mesure dans une certaine ville (zone_id).
+
+* pollutant : nom du polluant
+
+
+Puis les variables numériques de type météorologiques et qui varient avec le temps:
+
+
+* temperature :  la température (double)
+
+* windspeed : vitesse du vent (double)
+
+* windbearing_cos : direction du vent (cos) (double)
+
+* windbearing_sin :  direction du vent (sin) (double)
+
+* cloudcover : l'ensoleillement (double)
+
+* precipitations_intensity : l'intensité des précipitations (double)
+
+* precipitations_probability : les probabilités de précipitations (double)
+
+* pressure :  la pression (double)
+
+
+Et enfin, il existe un certain nombre de variables statiques (dans le temps), que l'on qualifiera de territoriales et qui font référence aux lieux de mesure. 
+Un buffer est un périmètre dessinée autour d’une position. Par exemple, le paramètres HLRES_50 correspond à la surface cumulée de terre résidentielle dans un cercel de 50 m de diamètre autour du point considéré.
+
+
+* HLRES: terres résidentielles à faible densité (m2) – buffers de 50,100,300,500,1000
+
+* HLDRES: HDRES + terres résidentielles à haute densité (m2) – buffers de 50,100,300,500,1000
+
+* INDUSTRY: terres industrielles (m2) – buffer de 1000
+
+* PORT: zones portuaires (m2) - buffer de 5000
+
+* NATURAL: Terres semi-naturelles et forestières (m2) – buffer de 5000
+
+* GREEN: parcs et espaces verts urbains + NATURAL (m2) – buffer de 5000
+
+* ROUTE: distance cumulée de route dans le périmètre (m) – buffers de 100, 300, 500, 1000
+
+* ROADINVDIST: distance inverse entre la station et la route la plus proche (1/m)
+
+La covariable ID associe un unique entier à chaque combinaison unique de type (zone_id, station_id, pollutant, daytime). Ceci se comprend bien, puisque pour chaque ville, station associée, polluant considéré et ce à une date précise, le dataset renseigne des informations météorologiques et statiques (associée à un type de territoire autour d'un certain lieu). Nous allons pouvoir vérifier toutes ces suppositions en menant une EDA (Exploratory Data Analysis) plus approfondie. On remarque d'ors et déjà qu'une grande partie des données "statiques" présentent des observations de type "NotAvailable", qu'il faudra évidemment gérer par la suite. L'énoncé descriptif des données explique que les NA dans le dataset proviennent de deux raisons:
+* "No land use is encompassed within the buffer for land use data" ( en anglais )
+* les données ne sont pas disponibles pour les paramètres météorologiques
+
+
+Pour simplifier notre travail, on décide d'utiliser la fonction "attach" pour s'affranchir du nom du dataset considéré lorsqu'on souhaite accéder aux covariables du dataset d'entraînement. Évidemment, on ne le fait que pour ce dataset, afin de ne pas faire de confusion entre les covariables des datasets d'apprentissage et de test, qui présentent les mêmes noms pour leurs covariables. 
+```{r attach, warning = FALSE, echo = F, include = F}
+attach(plume_training.data)
+```
+
+
+# EDA plus approfondie
+
+## Données manquantes
+
+```{r handling missing values 1, echo = F}
+count <- apply(plume_training.data, 2, function(x) sum(is.na(x)))
+count <- count / (dim(plume_training.data)[1]) * 100
+print("Proportion de données manquantes pour le training set")
+count
+count_test <- apply(plume_test.data, 2, function(x) sum(is.na(x)))
+count_test <- count_test / (dim(plume_test.data)[1]) * 100
+print("Proportion de données manquantes pour le test set")
+count_test
+```
+On remarque tout d'abord que les deux ensembles de test et d'entrainement présentent des proportions relativement identiques de données manquantes pour chacune de leurs différentes covariables.
+Suite à cette étude, on décide de supprimer les covariables "hlres_50" et "route_100" qui comptabilisent toutes deux plus de 84% de données manquantes, ce qui paraît difficilement gérable. Et ce pour les deux ensembles d'apprentissage et de test.
+
+```{r handling missing values 2, echo = F, include = F}
+plume_training.data <- subset(plume_training.data, select = -c(hlres_50, route_100) )
+plume_test.data <- subset(plume_test.data, select = -c(hlres_50, route_100) )
+str(plume_training.data)
+str(plume_test.data)
+```
+
+On va désormais s'occuper en priorité des variables telles que "hlres_500", "hlres_100" et "industry_1000" qui présentent un pourcentage de valeurs manquantes de l'ordre de 66% et des variables "hldres_50", "port_5000", "route_300" qui comptabilisent environ 50% de données manquantes. Enfin, il faut également gérer les variables "natural_5000", "hldres_300" et "hldres_500" (31% de données manquantes) et "green_5000", "hlres_1000" et "route_500" (entre 15% et 20% de données manquantes). Pour ce faire, nous allons nous fier aux explications annexes fournies par Plume Labs, qui laisse sous-entendre que les données manquantes pour ces variables descriptives des territoires en certains points font précisément référence à l'absence de tels territoires en ces points. Nous allons donc remplacer les "NA" données par des 0. On note par ailleurs qu'il n'y a pas de données manquantes pour les variables de type météorologiques. Ainsi, toutes les données manquantes de type "NA" sont à remplacer par des 0. Ceci est vrai pour les deux ensembles d'apprentissage et de test.
+
+
+```{r histogram, echo = F, include = F}
+plume_training.data[is.na(plume_training.data)] <- 0 
+plume_test.data[is.na(plume_test.data)] <- 0 
+# Utile pour l'apprentissage final utilisant toutes les données
+plume_test.data_final <- plume_test.data
+str(plume_training.data)
+str(plume_test.data)
+attach(plume_training.data)
+```
+
+Les données sont désormais en partie nettoyées. Pour tenter de voir si l'on peut considérer les variables indiquées comme numériques/continues ou discrètes, analysons leurs différentes modalités.
+## Nature des covariables
+
+```{r type de données}
+sapply(plume_training.data, function(x) length(unique(x)))
+sapply(plume_test.data, function(x) length(unique(x)))
+```
+
+Il semblerait que les variables de type "occupation des sols" (land use data) qui fournissent généralement une superficie en $m^2$ aient finalement peu de modalités pour qu'on puisse les considérer comme réellement continues. Cependant, cela semble assez logique vu le nombre de localisations considérées (6 modalités pour la variable "zone_id" ), qui est assez faible. Ces variables statiques sont donc très souvent identiques pour différentes "IDs" du dataset. Une autre façon de se convaincre qu'il faut les considérer comme continue passe par l'observation des modalités des variables dans l'ensemble de test.
+
+## Comparaison test et train set
+
+```{r comparaison test et train set}
+#Variable 'green_5000'
+unique(plume_test.data$green_5000)
+unique(green_5000)
+#Variable 'port_5000'
+unique(plume_test.data$port_5000)
+unique(port_5000)
+#Variable 'hldres_50'
+unique(plume_test.data$hldres_50)
+unique(hldres_50)
+```
+
+On remarque effectivement que les modalités ne se recoupent généralement pas entre le test et le train set, ce qui nous conforte à considérer ces variables comme continues pour notre problème, afin d'être sur de bien généraliser notre prédicteur/régresseur à de nouveaux datasets.
+
+Désormais, continuons d'analyser les covariables et leurs interactions. Cela nous permet aussi de regarder si nos deux ensembles d'apprentissage et de test sont à peu près construits de la même façon.
+
+## Analyse univariée des covariables
+
+### Variables statiques territoriales pour le train set
+
+```{r etude preliminaire histogram land use variable train set, warning = F, echo = F}
+par(mfrow=c(2,3))
+hist(green_5000)
+hist(hlres_50)
+hist(hlres_100)
+hist(hlres_300)
+hist(hlres_500)
+hist(hlres_1000)
+par(mfrow=c(2,3))
+hist(route_100)
+hist(route_300)
+hist(route_500)
+hist(route_1000)
+hist(port_5000)
+hist(hldres_50)
+par(mfrow=c(2,3))
+hist(hldres_100)
+hist(hldres_300)
+hist(hldres_500)
+hist(hldres_1000)
+hist(industry_1000)
+hist(natural_5000)
+```
+
+### Variables statiques territoriales pour le test set
+
+```{r etude preliminaire histogram land use variable test set, warning = F, echo = F}
+par(mfrow=c(2,3))
+hist(plume_test.data$green_5000)
+hist(plume_test.data$hlres_50)
+hist(plume_test.data$hlres_100)
+hist(plume_test.data$hlres_300)
+hist(plume_test.data$hlres_500)
+hist(plume_test.data$hlres_1000)
+par(mfrow=c(2,3))
+hist(plume_test.data$route_100)
+hist(plume_test.data$route_300)
+hist(plume_test.data$route_500)
+hist(plume_test.data$route_1000)
+hist(plume_test.data$port_5000)
+hist(plume_test.data$hldres_50)
+par(mfrow=c(2,3))
+hist(plume_test.data$hldres_100)
+hist(plume_test.data$hldres_300)
+hist(plume_test.data$hldres_500)
+hist(plume_test.data$hldres_1000)
+hist(plume_test.data$industry_1000)
+hist(plume_test.data$natural_5000)
+```
+
+### Variables météorologiques pour le train set
+
+```{r etude preliminaire histogram meteorological variables train set, warning  = F, echo = F}
+par(mfrow=c(3,3))
+hist(precipintensity)
+hist(precipprobability)
+hist(temperature)
+hist(roadinvdist)
+hist(windbearingcos)
+hist(windbearingsin)
+hist(windspeed)
+hist(cloudcover)
+hist(pressure)
+```
+
+### Variables météorologiques pour le test set
+
+```{r etude preliminaire histogram meteorological variables test set, warning = F, echo = F}
+par(mfrow=c(3,3))
+hist(plume_test.data$precipintensity)
+hist(plume_test.data$precipprobability)
+hist(plume_test.data$temperature)
+hist(plume_test.data$roadinvdist)
+hist(plume_test.data$windbearingcos)
+hist(plume_test.data$windbearingsin)
+hist(plume_test.data$windspeed)
+hist(plume_test.data$cloudcover)
+hist(plume_test.data$pressure)
+```
+
+Les premiers graphiques qui montrent les supports des covariables des train et test set laissent sous-entendre qu'elles sont globalement réparties de façon identique entre train et test set. Il est désormais plus intéressant de s'attarder sur les covariables de type identité.
+
+### ID variables pour le train set
+
+```{r etude preliminaire histogram id_values train set, warning = F, echo = F}
+par(mfrow=c(2,3))
+hist(ID)
+hist(daytime)
+hist(station_id)
+hist(zone_id)
+barplot(table(pollutant)/3, main = "Pollutant")
+barplot(table(is_calmday), main = "is_calmday")
+```
+
+### ID variables pour le test set
+
+```{r etude preliminaire histogram id_values test set, warning = F, echo = F}
+par(mfrow=c(2,3))
+hist(plume_test.data$ID)
+hist(plume_test.data$daytime)
+hist(plume_test.data$station_id)
+hist(plume_test.data$zone_id)
+barplot(table(plume_test.data$pollutant)/3, main = "Pollutant")
+barplot(table(plume_test.data$is_calmday), main = "is_calmday")
+```
+On remarque que les mêmes périodes de temps globalement (covariables daytime) sont partagées par le train et le test set. Il ne s'agit donc pas d'estimer la concentration d'un polluant pour un temps ultérieur, mais plus de bien prendre en compte les interactions temporelles déjà existantes pour estimer la concentration d'un polluant en un temps pour lequel on possède des informations précises. Par ailleurs les covariables "zone_id", "is_calmday" et "pollutant" présentent globalement les mêmes répartitions. Il est par contre primordial de remarquer que la station_id ne semble pas partagée de la même façon dans l'ensemble d'apprentissage et de test. C'est une remarque importante, puisque cette observation peut être la source de futurs problèmes et peut aboutir sur des moyens d'améliorer considérablement notre prédiction.
+
+## Analyse multivariée des covariables
+
+On s'intéresse désormais à l'analyse multivariée des différentes covariables. Pour cela, une visualisation intéressante est la matrice de corrélation entre les covariables, présentées ci-après.
+
+
+```{r analyse descriptive multivariée 2 correlations, warning = FALSE, fig.height= 10, fig.width=10, echo = F}
+require(corrplot)
+bool_vec <- sapply(plume_training.data, class) == 'numeric' | 
+  sapply(plume_training.data, class) == 'integer'
+len <- 1:ncol(plume_training.data)
+num_feature <- len[bool_vec]
+#par(oma=c(0,8,0,0))
+#par(mfrow=c(1,1))
+#pairs(plume_training.data) #nuages de points
+corrplot(cor(plume_training.data[,num_feature]), type="upper", order="hclust", tl.col="black", tl.srt=45)
+```
+
+L'observationd de cette matrice de corrélation entre les covariables nous permet de faire plusieurs remarques intéressantes:
+
+* Les variables de types territoriales sont très corrélées entre elles, mais bien moins avec les variables de type météorologiques. Il est en de même pour les variables de type météorologiques. On comprend bien qu'elles n'ont pas tout à fait le même sens, et que les premières sont statiques dans le temps et communes à une même station_id, tandis que ce n'est pas le cas des secondes qui sont fortement dépendantes du temps. A ce stade, on peut se dire que dans une analyse future, il pourrait être intéressant de séparer notre jeu de données en deux data set : l'un contenant les features météorologiques et l'autre contenant les features territoriaux et de mettre en place des stratégies d'apprentissage distinctes.
+
+* Par ailleurs, si l'on s'intéresse au feature "roadinvdist" (inverse de la distance à la plus proche route (1/m)), il semble très corrélé aux features "route_300", "route_500", "route_1000" (distance cumulée de route dans le périmètre (m)) et on comprend que l'on pourrait créer un nouveau feature adimensionné tel que road = roadinvdist * route_buffer.
+
+
+
+## Investigation plus poussée des différences entre train set et test set
+
+On a effectivement remarquer que les variables "station_ID" ne présentent pas les mêmes réalisations entre le train set et le test set. Ceci peut-être à l'origine de problème futurs, ou le signe qu'il faut repenser notre façon de travailler. On examine donc la répartition des valeurs pour station_id en fonction des zone_id, pour les données du train et du test set séparément.
+
+
+```{r investigating test and train set differences, echo = F}
+#print("FOR THE TRAIN SET")
+for (pollutants in c("NO2", "PM10", "PM2_5")){
+  plot(1,1,type='n', ylim=c(1,30), xlim=c(0,5), xlab = "zone_id", ylab = "station_id", main = paste("Station_id available for different zone_id for the pollutant ", pollutants ))
+  #print(sprintf("Pollutant %s", pollutants))
+  for (zone_id in c(0,1,2,3,4,5)){
+    #print(sprintf("zone_id %s:", zone_id))
+    subset_pollutant <- (plume_training.data$pollutant == pollutants) & (plume_training.data$zone_id == zone_id)
+    station_id_t <- unique(plume_training.data$station_id[subset_pollutant])
+    #print(sprintf("station_id %s :", station_id_t))
+    n <- length(station_id_t)
+    lines(rep(zone_id, n), station_id_t, type = "p", col = 'blue', cex = 2.0, pch = 20)
+    subset_pollutant <- (plume_test.data$pollutant == pollutants) & (plume_test.data$zone_id == zone_id)
+    station_id_t <- unique(plume_test.data$station_id[subset_pollutant])
+    #print(sprintf("station_id %s :", station_id_t))
+    n <- length(station_id_t)
+    lines(rep(zone_id, n), station_id_t, type = "p", col = 'red', cex = 2.0, pch = 20)
+  }
+}
+# #print("FOR THE TEST SET")
+# for (pollutants in c("NO2", "PM10", "PM2_5")){
+#   print(sprintf("Pollutant %s", pollutants))
+#   for (zone_id in c(0,1,2,3,4,5)){
+#     print(sprintf("zone_id %s:", zone_id))
+#     subset_pollutant <- (plume_test.data$pollutant == pollutants) & (plume_test.data$zone_id == zone_id)
+#     station_id_t <- unique(plume_test.data$station_id[subset_pollutant])
+#     print(sprintf("station_id %s :", station_id_t))
+#   }
+# }
+```
+Sur les graphiques précédents, la couleur bleue fait référénces aux données d'apprentissage, tandis que le rouge fait référence aux données de test. On remarque grâce aux graphiques précédents qui présentent les station_id disponibles pour chaque zone_id (ville) pour chaque polluants que les données ne se recoupent jamais entre train et test set. Cela explique ce que l'on observe précèdemment. Le problème est finalement un peu différent : il s'agit, pour chaque polluant, et pour chaque ville de prévoir la concentration en des stations précises, sachant que l'on connait les concentrations en d'autres lieux/stations de cette même ville. 
+
+Cette observation est très importante et elle sera prise en considération par la suite afin de tenter d'approfondir notre modèle.
+
+
+# Test de la régression linéaire
+
+Pour effectuer une régression linéaire il nous faut tout d'abord retravailler la forme des ensembles afin d'intégrer la quantité que l'on souhaite prédire dans le dataset, à savoir la concentration des différents polluants considérés. 
+
+
+## Encodage des dummy variables
+```{r analysing TARGET, echo = F, warning = F}
+par(mfrow=c(1,3))
+subset_NO2 <- pollutant == 'NO2'
+subset_PM10 <- pollutant == 'PM10'
+subset_PM2_5 <- pollutant == 'PM2_5'
+hist(plume_train_output.data$TARGET[subset_NO2])
+hist(plume_train_output.data$TARGET[subset_PM10])
+hist(plume_train_output.data$TARGET[subset_PM2_5])
+```
+
+Une des premières étapes à mettre en place afin d'appliquer correctement un modèle de régression linéaire est la création de variables "dummy" afin d'encoder numériquement les variables catégorielles, qui sont ici "is_calmday" et "pollutant". Ci-dessus, nous avons tracé les histogrammes des trois réalisations possibles pour chacun des polluants, de la variable "TARGET". Au vu des supports de ces différentes réalisations, on décide d'incorporer une notion de rang/d'ordre dans notre façon d'encoder les niveaux de la variable "pollutant": NO2 à 0 car ses concentrations sont les plus faibles, PM2_5 à 1 car ses concentrations sont intermédiaires et PM10 à 2 car ses concentrations sont en moyenne plus élevées. On fait cela pour le train et test set, bien entendu.
+
+
+
+```{r modifying the shape of our training set & dummy variables, warning = FALSE, echo = F, include = F}
+plume_tot_training <- merge(plume_training.data ,plume_train_output.data,by="ID")
+attach(plume_tot_training)
+# On crée des dummy variables pour les variables catégorielles (is_calmday et pollutant)
+plume_tot_training['pollutant_dummy'] <- 0
+plume_tot_training['is_calmday_dummy'] <- 0
+attach(plume_tot_training)
+pollutant_dummy[pollutant == 'PM10'] <-  2
+pollutant_dummy[pollutant == 'PM2_5'] <-  1
+is_calmday_dummy[is_calmday == 'True'] <- 1
+plume_tot_training['pollutant_dummy'] <- pollutant_dummy
+plume_tot_training['is_calmday_dummy'] <- is_calmday_dummy
+plume_tot_training <- plume_tot_training[, -c(9,25)]
+attach(plume_tot_training)  
+```
+
+```{r modifying the shape of our test set & dummy variables, warning = FALSE, echo = F, include = F}
+# On crée également des dummy variables pour l'ensemble de test
+plume_test.data['pollutant_dummy'] <- 0
+plume_test.data['is_calmday_dummy'] <- 0
+plume_test.data$pollutant_dummy[plume_test.data$pollutant == 'PM10'] <-  2
+plume_test.data$pollutant_dummy[plume_test.data$pollutant == 'PM2_5'] <-  1
+plume_test.data$is_calmday_dummy[plume_test.data$is_calmday == 'True'] <- 1
+plume_test.data['pollutant_dummy'] <- plume_test.data$pollutant_dummy
+plume_test.data['is_calmday_dummy'] <- plume_test.data$is_calmday_dummy
+plume_test.data <- plume_test.data[, -c(9,25)]
+```
+
+On met en place une régression linéaire classique.
+
+## Régression linéaire classique par Moindres Carrés.
+
+```{r regfit 1}
+lm.fit <- lm(TARGET~.,data = plume_tot_training[,-1]) 
+lm.summary<-summary(lm.fit) 
+```
+On s'assure avant d'analyser les résultats que l'on peut bien utiliser ces techniques classiques de régression linéaire (matrice de rang plein et hypothèse des résidus normalisés, hétéroscédasticités, homogénéité ... ). 
+```{r test of the linear model, echo = F, warning = F}
+require(Matrix)
+data_matrix <- data.matrix(plume_tot_training[,-c(1,30)], rownames.force = NA)
+rank <- rankMatrix(data_matrix)
+sprintf("Le range de la matrice obtenu vaut %s",rank)
+```
+Notre matrice des covariables n'est donc pas de rang plein et il faut donc utiliser d'autres modèles de régression linéaire plus robustes. Dans un premier temps, nous allons utiliser la régression Ridge par exemple.
+
+## Régression Ridge
+
+```{r my seed, echo = F}
+myseed <- 17
+```
+
+La régression Ridge peut s'effectuer avec le package glmnet (option alpha=0). Cependant, il faut d'abord créer un objet de type matrice contenant les prédicteurs. Pour pouvoir analyser la qualité de notre modèle, nous allons devoir le tester sur un ensemble de test. A cet égard, il est important de noter que l'ensemble de test fourni par les organisateurs du challenge ne peut être utilisé que pour soumettre une solution sur la plateforme du challenge, qui jugera elle-même de la performance de notre modèle. Il est donc impératif de créer un ensemble de validation supplémentaire, issu de l'ensemble d'apprentissage fourni par la plateforme et pour lequel nous connaissons les valeurs TARGET. Avant d'utiliser la régression ridge, il nous faut donc partitionner notre jeu de donnée plume_tot_training en un ensemble d'apprentissage et de validation. Vu la quantité de données disponibles, nous allons réserver 30% des données pour le test et 70% pour l'apprentissage. 
+
+```{r separating the data set: training and test, echo = F, include = F}
+n_training_tot = nrow(plume_tot_training)
+# Sélectionner des indices de façon aléatoire
+indexes = sample(1:n_training_tot, size=0.3*n_training_tot)
+# Séparer les dataset selon ces indices
+test = plume_tot_training[indexes, ]
+train = plume_tot_training[-indexes, ]
+```
+
+```{r creation matrice predicteurs : apprentissage et validation 1, echo = F, warning = F, message = F, error = F, include = F}
+library(glmnet)
+set.seed(myseed)
+xtrain<-model.matrix(TARGET~.,train[,-1])[,-1]
+str(xtrain)
+xtest <- model.matrix(TARGET~., test[,-1])[,-1]
+class(xtrain)
+ytrain <- train[, "TARGET"]
+ytest <- test[, "TARGET"]
+```
+
+Pour la régression Ridge, l'estimation des coefficients dépend du choix du  paramètre $\lambda.$ On peut par exemple visualiser, pour chaque coefficient, une trajectoire de son estimateur en fonction de $\lambda.$
+
+
+```{r regression ridge 1, echo = F, warning = F, message = F, error = F}
+library(glmnet)
+set.seed(myseed)
+mygrid<-c(10^seq(from=-3,to=3,length=100)) #grille de valeurs pour lambda
+#calcul du critere de validation croisee pour chaque valeur de lambda
+mycv.ridge.out <- cv.glmnet(x = xtrain,y = ytrain, alpha = 0,lambda = mygrid) 
+plot(mycv.ridge.out) #valeur du critere en fonction de log(lambda)
+mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+sprintf("mybestlam = %s " , mybestlam)
+abline(v=log(mybestlam),col="blue")
+abline(h=min(mycv.ridge.out$cvm),col="green")
+```
+
+Il est important de noter que nous avons sélectionner une grille acceptable pour $\lambda$ telle que $\lambda \in [10^{-3}; 10^{3}]$. J'ai également tenté de diminuer la borne min de cet intervalle, et la validation croisée sélectionnait systématiquement la valeur la plus faible possible pour $\lambda$. Cette observation n'est pas satisfaisante, puisque le modèle choisi a tendance à être complexe (faible $\lambda$) et on augmente donc le risque de sur-apprentissage.
+```{r ridge avec le bon lambda pour l ensemble d apprentissage, echo = F, warning = F}
+myridge <- glmnet(x = xtrain, y = ytrain, alpha = 0, lambda = mybestlam) 
+# Prédiction sur l'ensemble d'apprentissage
+ridge.pred <- predict(myridge, lambda = mybestlam, newx = xtrain)
+ridge.pred.err <- mean((ytrain - ridge.pred)^2)
+sprintf("L'erreur de prédiction sur l'échantillon d'apprentissage vaut")
+sprintf("(root mean square normalized) %s",ridge.pred.err)
+```
+
+
+Nous avons spécifiquement tenté différentes type de régression plus robustes : Ridge, LASSO (qui fait de la sélection de modèles) et Elastic-Net (alpha = 0.5). 
+
+```{r ridge avec le bon lambda pour l ensemble de test, echo = F, warning = F}
+# Prédiction sur l'ensemble de test
+ridge.pred_test <- predict(myridge, lambda = mybestlam, newx = xtest)
+#ridge.pred.err <- colMeans((ytest - ridge.pred_test)^2) 
+ridge.pred.err <- mean((ytest - ridge.pred_test)^2) 
+sprintf("L'erreur de prédiction sur l'échantillon de test vaut ")
+sprintf("(root mean square normalized) %s",ridge.pred.err)
+```
+
+
+Ces erreurs semblent relativement acceptables et nous pouvons donc désormais tenter de soumettre notre solution sur le site du challenge. Pour ce faire, il est important d'utiliser la totalité des données étiquetées à notre disposition pour entraîner le prédicteur.
+
+Les résultats obtenus avec nos ensembles d'apprentissage et de test (et non l'ensemble de test du challenge) sont présentés ci-dessous:
+
+| Méthode | Mean square error train  | Mean square error test | 
+|------:|:-----|---------|
+| Régression Ridge |211.8 | 207.5 | 
+| Régression LASSO | 212.7 | 219.7 | 
+| Régression Elastic-Net | 211.8 | 207.5 |
+
+Nous présentons désormais les résultats obtenus lors de la soumission de nos résultats sur le site du challenge, en comparaison avec le benchmark initial de Plume Labs et le meilleur score du leaderboard:
+
+| Méthode | Public score  | Private score | 
+|------:|:-----|---------|
+| Régression Ridge |373.6 |353.3 | 
+| Plume Labs (benchmark) | 501.3 | 480.1 | 
+| Meilleur score du leaderboard | 193.2 | 178.8 |
+
+
+```{r creation matrice predicteurs : apprentissage et test pour soumission des données 2, echo = F, warning = F, message = F, error = F, include = F }
+library(glmnet)
+set.seed(myseed)
+xtrain<-model.matrix(TARGET~.,plume_tot_training[,-1])[,-1]
+str(xtrain)
+class(xtrain)
+ytrain <- plume_tot_training[, "TARGET"]
+require(Matrix)
+xtest <- data.matrix(plume_test.data[,-1], rownames.force = NA)
+
+```
+
+```{r ridge avec le bon lambda pour ensemble test et soumission résultats, echo = F, warning = F, include = F}
+ridge.pred_test <- predict(myridge, lambda = mybestlam, newx = xtest)
+ridge.pred_test <- round(ridge.pred_test)
+```
+
+
+
+```{r final file for testing, echo = F, warning = F, include = F}
+submission <- data.frame(plume_test.data$ID, ridge.pred_test)
+colnames(submission) <- c('ID','TARGET')
+write.csv(submission, file = "plume_subsmission.csv", row.names = FALSE)
+```
+
+
+
+#Critères pénalisés de sélection de modèles 
+
+Comme on a pu le voir, nos données présentent un assez grand nombre de covariables et il peut être intéressant de mettre en place des critères pénalisés pour sélectionner certaines covariables. Même si une sélection de modèle n'aboutit pas nécessairement, dans le sens où il est parfois plus intéressant de garder la totalité des covariables, il sera toujours intéressant d'analyser quelles covariables spécifiques sont sélectionnées. Nous présentons ainsi les résultats des critères de sélection du Cp de Mallows et du critère BIC avec recherche exhaustive et ce pour des modèles à 20 et 10 covariables retenues.
+
+## Critère du Cp de Mallows
+
+```{r exhaustive vs hybride, echo = F, warning = F, message = F, error = F}
+set.seed(myseed)
+library(leaps)
+#par defaut, la recherche est exhaustive et nvmax=20 (dimension maximale du modèle)
+regfit.exh<-regsubsets(TARGET~., data = train[,-1], nvmax = 20) 
+#methode exhaustive avec nvmax = 10
+regfit.exh2<-regsubsets(TARGET~., data = train[,-1] , nvmax = 10) 
+par(mfrow=c(1,2), cex = 0.7)
+plot(regfit.exh,scale="Cp", main = "Selection de modèle à 20 covariables : CP de Mallows")
+plot(regfit.exh2,scale="Cp", main = "Selection de modèle à 10 covariables : CP de Mallows")
+```
+
+<!--On peut retrouver le meilleur modèle choisi par le $C_P$ de Mallows de différentes manières.-->
+```{r meilleur modele CP, include = F}
+regfit.exh.summary<-summary(regfit.exh) 
+bestCp<-which.min(regfit.exh.summary$cp);bestCp #dimension du modele choisi par Cp
+regfit.exh.summary$which[bestCp,] #variables selectionnees par Cp
+```
+
+```{r meilleur modele CP noms, include = F}
+which(regfit.exh.summary$which[bestCp,]==TRUE) #Attention ? l'intercept !
+#indices des variables selectionnes dans le tableau de donnees
+indCP<-which(regfit.exh.summary$which[bestCp,]==TRUE)[-1] - 1
+indCP
+train2 <- train[, -c(1,30)]
+modCP<-names(train2)[indCP]
+modCP #noms des variables selectionnees par CP
+```
+
+<!--On peut maintenant calculer l'erreur de prédiction sur l'échantillon test pour le modèle sélectionné par le $C_P$ de Mallows.-->
+
+
+```{r creation matrice predicteurs : apprentissage et validation 3, include = F}
+library(glmnet)
+set.seed(myseed)
+train_new <- data.frame(train[, modCP], train$TARGET)
+xtrain<-model.matrix(train.TARGET~.,train_new)[,-1]
+str(xtrain)
+test_new <- data.frame(test[, modCP], test$TARGET)
+xtest <- model.matrix(test.TARGET~., test_new)[,-1]
+class(xtrain)
+ytrain <- train[, "TARGET"]
+ytest <- test[, "TARGET"]
+```
+
+<!--Pour la régression Ridge, l'estimation des coefficients dépend du choix du  paramètre $\lambda.$ On peut par exemple visualiser, pour chaque coefficient, une trajectoire de son estimateur en fonction de $\lambda.$-->
+
+
+```{r regression ridge 2, include = F}
+library(glmnet)
+set.seed(myseed)
+mygrid<-c(10^seq(from=-1,to=3,length=100)) #grille de valeurs pour lambda
+#calcul du critere de validation croisee pour chaque valeur de lambda
+mycv.ridge.out <- cv.glmnet(x = xtrain,y = ytrain, alpha = 0,lambda = mygrid) 
+plot(mycv.ridge.out) #valeur du critere en fonction de log(lambda)
+mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+sprintf("mybestlam = %s " , mybestlam)
+abline(v=log(mybestlam),col="blue")
+abline(h=min(mycv.ridge.out$cvm),col="green")
+```
+
+```{r ridge avec le bon lambda pour l ensemble d apprentissage 2, include = F}
+myridge <- glmnet(x = xtrain, y = ytrain, alpha = 0, lambda = mybestlam) 
+# Prédiction sur l'ensemble d'apprentissage
+ridge.pred <- predict(myridge, lambda = mybestlam, newx = xtrain)
+#ridge.pred.err <- colMeans((ytrain - ridge.pred)^2)
+ridge.pred.err <- mean((ytrain - ridge.pred)^2)
+sprintf("L'erreur de prédiction sur l'échantillon d'apprentissage vaut (root mean square normalized) %s",ridge.pred.err)
+```
+
+
+```{r ridge avec le bon lambda pour l ensemble de test 2, include = F}
+# Prédiction sur l'ensemble de test
+ridge.pred_test <- predict(myridge, lambda = mybestlam, newx = xtest)
+#ridge.pred.err <- colMeans((ytest - ridge.pred_test)^2) 
+ridge.pred.err <- mean((ytest - ridge.pred_test)^2) 
+sprintf("L'erreur de prédiction sur l'échantillon de test vaut (root mean square normalized) %s",ridge.pred.err)
+```
+
+
+## Critère BIC
+
+On effectue désormais des tests avec le critère BIC.
+
+On regarde désormais ce que l'on obtient en implémentant le critère BIC. 
+```{r exhaustive vs hybride bic, echo = F, warning = F, error = F}
+set.seed(myseed)
+library(leaps)
+#par defaut, la recherche est exhaustive et nvmax = 20 (dimension maximale du modèle)
+regfit.exh<-regsubsets(TARGET~., data = train[,-1],nvmax = 20) 
+#methode hybride
+regfit.exh2<-regsubsets(TARGET~., data = train[,-1],nvmax = 10) 
+par(mfrow=c(1,2), cex = 0.7)
+plot(regfit.exh,scale="bic",  main = "Selection de modèle à 20 covariables : BIC ")
+plot(regfit.exh2,scale="bic",  main = "Selection de modèle à 10 covariables : BIC ")
+```
+<!--On peut retrouver le meilleur modèle choisi par le critère BIC de différentes manières.-->
+```{r meilleur modele BIC, include = F}
+regfit.exh.summary<-summary(regfit.exh) 
+bestbic<-which.min(regfit.exh.summary$bic);bestbic #dimension du modele choisi par bic
+regfit.exh.summary$which[bestbic,] #variables selectionnees par bic
+```
+
+```{r meilleur modele BIC noms, include = F}
+which(regfit.exh.summary$which[bestbic,]==TRUE) #Attention ? l'intercept !
+#indices des variables selectionnes dans le tableau de donnees
+indbic<-which(regfit.exh.summary$which[bestbic,]==TRUE)[-1]-1 
+indbic
+train3 <- train[, -c(1,30)]
+modbic<-names(train3)[indbic]
+modbic #noms des variables selectionnees par bic
+```
+
+```{r creation matrice predicteurs : apprentissage et validation 4, include = F}
+library(glmnet)
+set.seed(myseed)
+train_new <- data.frame(train[, modbic], train$TARGET)
+xtrain<-model.matrix(train.TARGET~.,train_new)[,-1]
+str(xtrain)
+test_new <- data.frame(test[, modbic], test$TARGET)
+xtest <- model.matrix(test.TARGET~., test_new)[,-1]
+class(xtrain)
+ytrain <- train[, "TARGET"]
+ytest <- test[, "TARGET"]
+```
+
+<!--Pour la régression Ridge, l'estimation des coefficients dépend du choix du  paramètre $\lambda.$ On peut par exemple visualiser, pour chaque coefficient, une trajectoire de son estimateur en fonction de $\lambda.$-->
+
+
+```{r regression ridge 3, include = F}
+library(glmnet)
+set.seed(myseed)
+mygrid<-c(10^seq(from=-3,to=3,length=100)) #grille de valeurs pour lambda
+#calcul du critere de validation croisee pour chaque valeur de lambda
+mycv.ridge.out <- cv.glmnet(x = xtrain,y = ytrain, alpha = 0,lambda = mygrid) 
+plot(mycv.ridge.out) #valeur du critere en fonction de log(lambda)
+mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+sprintf("mybestlam = %s " , mybestlam)
+abline(v=log(mybestlam),col="blue")
+abline(h=min(mycv.ridge.out$cvm),col="green")
+```
+
+```{r ridge avec le bon lambda pour l ensemble d apprentissage 1, include = F}
+myridge <- glmnet(x = xtrain, y = ytrain, alpha = 0, lambda = mybestlam) 
+# Prédiction sur l'ensemble d'apprentissage
+ridge.pred <- predict(myridge, lambda = mybestlam, newx = xtrain)
+#ridge.pred.err <- colMeans((ytrain - ridge.pred)^2)
+ridge.pred.err <- mean((ytrain - ridge.pred)^2)
+sprintf("L'erreur de prédiction sur l'échantillon d'apprentissage vaut
+        (root mean square normalized) %s",ridge.pred.err)
+```
+
+
+```{r ridge avec le bon lambda pour l ensemble de test 1, include = F}
+# Prédiction sur l'ensemble de test
+ridge.pred_test <- predict(myridge, lambda = mybestlam, newx = xtest)
+ridge.pred.err <- mean((ytest - ridge.pred_test)^2) 
+sprintf("L'erreur de prédiction sur l'échantillon de test vaut
+        (root mean square normalized) %s",ridge.pred.err)
+```
+
+
+Pour ces quatre modèles, nous avons pu mettre en place une validation croisée (comme précèdemment) afin de déterminer le meilleur $\lambda$ et déterminer les mean square error en conséquences. Nous avons également pu examiner quelles variables étaient rejetées en priorité. Les résultats sont présentés dans le tableau ci-dessous:
+
+
+| Méthode de sélection de variables | MSE train  | Mse test |  Dimension modèle max |  Dimension modèle choisie | Variables rejetées |
+|-----------------------------------:|:----------|----------|------------------------|--------------------------|--------------------------|
+| $C_p$ de Mallows |213.7 |206.3 | 20 | 20 | territoriales |
+| $C_p$ de Mallows |217.5 |213.2 | 10 | 10 | territoriales (majorité) + météo |
+| $BIC$ |212.8 |205.4 | 20 | 20 | territoriales |
+| $BIC$ |216.0 |205.4 | 10 | 10 | territoriales (majorité) + météo |
+
+Il est désormais très important de remarquer que la différence de MSE atteinte avec notre test set (environ 200) et le test des challengeurs (plutôt 370) provient du test set artificel que nous avons créer à partir des données d'apprentissage. Effectivement, nous avons choisi 30% des données de façon aléatoire, ce qui ne garantit absolument pas que les train et test set ne partagent pas de station_id identiques. Il faudrait en pratique s'assurer que notre test set est construit comme celui surlequel on souhaite généraliser notre modèle. C'est pour cette raison que nos résultats sont meilleurs que ceux qui nous ont été communiqués par la plateforme du challenge.
+
+
+# Amélioration de nos résultats
+
+Les résultats obtenus ne sont pas si mauvais, mais il est encore possible de les améliorer. A ce propos, nous allons émettre quelques pistes futures à investiguer.
+
+* Regrouper les données par polluant et entraîner trois régresseurs différents. Cette idée à l'avantage de se débarasser du problème d'encodage des dummy variables et fait complètement sens, puisqu'à priori, les concentrations de ces trois polluants ne devraient pas être liées.
+
+* Créer de nouveaux features/ de nouvelles covariables que l'on pourrait qualifier de "lag" variables afin de capturer les dépendances temporelles pour les données de type météorologiques. C'est une pratique tout à fait courante lorsqu'on travaille sur un jeu de donnée type série temporelle.
+
+* Des suites de notre EDA, il semblerait que notre jeu de données puisse bien se scinder en deux catégories de variables : les variables météorologiques et les variables territoriales statiques. Les secondes sont plus complexes à comprendre et gérer puisqu'elles sont plutôt de type discrètes que continues numériques et qu'elles sont communes à toutes les station_id et constantes dans le temps, donc en un sens, elles apportent moins d'informations que les variables météorologiques qui varient temporellement. La séparation des variables en deux ensemble distincts est une piste intéressante à exploiter. 
+
+* Il faut également se rappeler de la répartition de la variables "station_id" qui n'est pas commune au train et test set. Une façon intéressante de se débarasser de cette difficulté est de moyenner certains résultats sur les différentes station_id disponibles. Nous en discuterons plus précisément par la suite.
+
+
+
+
+```{r nouvelle approche, include = F, warning = F}
+plume_tot_training <- merge(plume_training.data, plume_train_output.data,by="ID")
+attach(plume_tot_training)
+plume_NO2_training <- subset(plume_tot_training[ pollutant == "NO2" ,], select=-c(pollutant))
+plume_PM10_training <- subset(plume_tot_training[ pollutant == "PM10" ,], select=-c(pollutant))
+plume_PM2_5_training <- subset(plume_tot_training[ pollutant == "PM2_5" ,], select=-c(pollutant))
+meteorological_features <- c(precipintensity, precipprobability, temperature, is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed)
+land_use_features <- c(green_5000, hldres_50, hlres_1000, route_1000, roadinvdist, port_5000, hldres_100, natural_5000, hlres_300, hldres_300, route_300, route_500, hlres_500, hlres_100, industry_1000, hldres_50, hldres_1000 )
+ID_features <- c(ID, zone_id, station_id, daytime)
+```
+
+
+
+## Travail avec les features météorologiques uniquement
+
+Dans un premier temps, on ne prend en compte que les features météorologiques, en séparant en trois cluster les prédictions pour chaque polluant. Cette idée provient du fait que la sélection de variables laissait sous-entendre que les features météorologiques étaient plus importants que les territoriaux. Par soucis de clarté, le code n'est pas affiché ici, mais il est bien entendu disponible sur le fichier Rmarkdown. Il est intéressant de noter que l'on obtient, avec cette approche un meilleur résultat pour la mean square error que lorsque la totalité du jeu de données était considérée.
+
+| Public score  | Private score | 
+|:-----|---------|
+|354 |332 | 
+
+
+```{r pour soumission de nos résultats juste avec météorologiques features 1, include = F}
+library(glmnet)
+for (pollutants in c("NO2", "PM10", "PM2_5")){
+  # On crée les sous-ensemble d'apprentissage par polluants
+  plume_poll_training  <- subset(plume_tot_training[ plume_tot_training$pollutant == pollutants ,], select=-c(pollutant))
+  # Ensemble d'apprentissage pour estimer la concentration
+  plume_meteo_training <- subset(plume_poll_training, select = c(ID, zone_id, station_id, daytime, precipintensity,   precipprobability, temperature,    is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed, TARGET)   )
+  set.seed(myseed)
+  
+  test_meteo <- subset(plume_test.data_final[ plume_test.data_final$pollutant == pollutants, ], select = c(ID, zone_id, station_id, daytime, precipintensity,   precipprobability, temperature,    is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed))
+  
+  # Séparer les dataset selon ces indices
+  require(Matrix)
+  train_meteo = plume_meteo_training
+  xtrain_meteo<-model.matrix(TARGET~.,train_meteo[,-1])[,-1]
+  xtest_meteo <- data.matrix(test_meteo[,-1], rownames.force = NA)
+  ytrain_meteo <- train_meteo[, "TARGET"]
+  
+  # On met en place régression ridge pour estimer la concentration
+
+  # Détermination du lambda par validation croisée
+  mygrid<-c(10^seq(from=-3,to=3,length=100)) #grille de valeurs pour lambda
+  mycv.ridge.out <- cv.glmnet(x = xtrain_meteo,y = ytrain_meteo, alpha = 0,lambda = mygrid)
+  mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+  myridge <- glmnet(x = xtrain_meteo, y = ytrain_meteo, alpha = 0, lambda = mybestlam)
+
+  # Prédiction sur l'ensemble d'apprentissage
+  ridge.pred_train_meteo <- predict(myridge, lambda = mybestlam, newx = xtrain_meteo)
+  ridge.pred.err.train.meteo <- mean((ytrain_meteo - ridge.pred_train_meteo)^2)
+  
+  # On ajoute la nouvelle colonne des concentrations prédites au dataset d'apprentissage
+  train_meteo[, "predicted_concentration"] <- ridge.pred_train_meteo
+
+  # Prédiction sur l'ensemble de test
+  ridge.pred_test_meteo <- predict(myridge, lambda = mybestlam, newx = xtest_meteo)
+  
+  # On ajoute la nouvelle colonne des concentrations prédites au dataset de test
+  test_meteo[, "predicted_concentration"] <- ridge.pred_test_meteo
+  
+  pred_tot_test <- ridge.pred_test_meteo
+  pred_tot_train <- ridge.pred_train_meteo
+  
+  # Erreur totzale sur l'ensemble d'apprentissage
+  ridge.train.err_tot <- mean((ytrain_meteo - pred_tot_train)^2)
+  
+  if (pollutants == "NO2"){
+    pred_NO2 <- pred_tot_test
+  }
+  
+  if (pollutants == "PM10"){
+    pred_PM10 <- pred_tot_test
+  }
+  
+  if (pollutants == "PM2_5"){
+    pred_PM2_5 <- pred_tot_test
+  }
+  
+} 
+
+# On rassemble toutes les prédictions en gardant le bon indexage
+total_pred <- rbind(pred_NO2, pred_PM10, pred_PM2_5)
+total_pred <- total_pred[ order(as.numeric(row.names(total_pred))),]
+total_pred <- data.frame(total_pred)
+
+# On s'occupe des prédictions un peu étranges
+total_pred[total_pred < 4] <- 4
+
+total_pred <- round(total_pred)
+
+```
+
+## Travail avec l'ensemble des données
+
+Une nouvelles alternative afin de prendre en compte les features territoriaux se pose comme suit:
+
+* Mise en place d'un clustering avec trois prédicteurs pour chaque polluants $(NO_2, PM_{10}, PM_{2.5})$ 
+
+* On prédit la concentration à l'aide des variables météorologiques uniquement (comme précèdemment), pour chaque station_id, daytime et zone_id (et chaque polluant) avec une régression ridge.
+
+* Ensuite, en utilisant les features territoriaux, on tente de prédire (régression ridge) TARGET - TARGET_mean_station_id, où TARGET_mean_station_id est la moyenne des concentrations pour chaque polluant par station_id.
+
+* On somme ensuite les deux contributions précedemment prédites pour donner notre prédiction finale de la concentration du polluant.
+
+Encore une fois, par soucis de clarté, le code n'est pas présenté dans ce rapport, mais il est bien sur accessible depuis sur le fichier Rmarkdown. Les résultats obtenus sont les suivants:
+
+| Public score  | Private score | 
+|:-----|---------|
+|358.7 |336.4 | 
+
+Il est étrange de remarquer que le score ne s'est pas amélioré par rapport au cas précédent, où l'on ne considérait que les covariables météorologiques. Je n'ai pas d'explications précises à ce propos, puisque je pensais au contraire que la deuxième prédiction basée sur les features territoriaux (TARGET - TARGET_mean_station_id) nous permettrait de rectifier la première prédiction afin de mieux prendre en compte le feature "station_id".
+
+
+```{r pour soumission de nos résultats, meteo + land test 2, include = F}
+library(glmnet)
+for (pollutants in c("NO2", "PM10", "PM2_5")){
+  # On crée les sous-ensemble d'apprentissage par polluants
+  plume_poll_training  <- subset(plume_tot_training[ plume_tot_training$pollutant == pollutants ,], select=-c(pollutant))
+  # Ensemble d'apprentissage pour estimer la concentration
+  plume_meteo_training <- subset(plume_poll_training, select = c(ID, zone_id, station_id, daytime, precipintensity,   precipprobability, temperature,    is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed, TARGET)   )
+  set.seed(myseed)
+  
+  test_meteo <- subset(plume_test.data_final[ plume_test.data_final$pollutant == pollutants, ], select = c(ID, zone_id, station_id, daytime, precipintensity,   precipprobability, temperature,    is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed))
+  
+  # Séparer les dataset selon ces indices
+  require(Matrix)
+  train_meteo = plume_meteo_training
+  xtrain_meteo<-model.matrix(TARGET~.,train_meteo[,-1])[,-1]
+  xtest_meteo <- data.matrix(test_meteo[,-1], rownames.force = NA)
+  ytrain_meteo <- train_meteo[, "TARGET"]
+  
+  # On met en place régression ridge pour estimer la concentration
+
+  # Détermination du lambda par validation croisée
+  mygrid<-c(10^seq(from=-3,to=3,length=100)) #grille de valeurs pour lambda
+  mycv.ridge.out <- cv.glmnet(x = xtrain_meteo,y = ytrain_meteo, alpha = 0,lambda = mygrid)
+  mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+  myridge <- glmnet(x = xtrain_meteo, y = ytrain_meteo, alpha = 0, lambda = mybestlam)
+
+  # Prédiction sur l'ensemble d'apprentissage
+  ridge.pred_train_meteo <- predict(myridge, lambda = mybestlam, newx = xtrain_meteo)
+  ridge.pred.err.train.meteo <- mean((ytrain_meteo - ridge.pred_train_meteo)^2)
+  
+  # Prédiction sur l'ensemble de test
+  ridge.pred_test_meteo <- predict(myridge, lambda = mybestlam, newx = xtest_meteo)
+  
+  # # Apprentissage utilisant les features territoriaux avec nouveau feature "predicted_minus_mean" pour ajuster la concentration
+
+  plume_land_training <- subset(plume_poll_training, select = c(ID, zone_id, station_id, daytime, green_5000, hldres_50, hlres_1000, route_1000, roadinvdist, port_5000, hldres_100, natural_5000, hlres_300, hldres_300, route_300, route_500, hlres_500, hlres_100, industry_1000, hldres_50, hldres_1000, TARGET))
+
+  test_land <- subset(plume_test.data_final[ plume_test.data_final$pollutant == pollutants, ], select = c(ID, zone_id, station_id, daytime, green_5000, hldres_50, hlres_1000, route_1000, roadinvdist, port_5000, hldres_100, natural_5000, hlres_300, hldres_300, route_300, route_500, hlres_500, hlres_100, industry_1000, hldres_50, hldres_1000) )
+
+  # Séparer les dataset selon ces indices pour les features territoriaux : 1
+  train_land = plume_land_training
+  
+  # Calculer les target_mean par station_id pour le train set
+  aggdata_mean_TARGET_id_station <- aggregate(train_land$TARGET, by = list(train_land$station_id), FUN = mean, na.rm = TRUE)
+  colnames(aggdata_mean_TARGET_id_station) <- c("station_id", "TARGET_mean_station")
+  
+  # On reforme le train_land dataset
+  train_land <- merge(train_land, aggdata_mean_TARGET_id_station, by = "station_id")
+
+  # On rassemble ces deux dataset
+  train_land["TARGET_DIFF"] <- train_land$TARGET - train_land$TARGET_mean_station
+  # On se débarasse de ce dont on a pas besoin pour l'apprentissage à priori
+  train_land <- subset(train_land, select = -c(TARGET, TARGET_mean_station))
+
+  # Séparer les dataset selon ces indices pour les features territoriaux : suite
+  xtrain_land<-model.matrix(TARGET_DIFF~.,train_land[,-1])[,-1]
+  xtest_land <- data.matrix(test_land[,-1], rownames.force = NA)
+  ytrain_land <- train_land[, "TARGET_DIFF"]
+
+
+  # On met en place régression ridge pour estimer la std de la concentration
+
+  # Détermination du lambda par validation croisée
+  mygrid<-c(10^seq(from=-3,to=3,length=100)) #grille de valeurs pour lambda
+  mycv.ridge.out <- cv.glmnet(x = xtrain_land,y = ytrain_land, alpha = 1,lambda = mygrid)
+  mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+  myridge <- glmnet(x = xtrain_land, y = ytrain_land, alpha = 1, lambda = mybestlam)
+
+  # Prédiction sur l'ensemble d'apprentissage
+  ridge.pred_train_land <- predict(myridge, lambda = mybestlam, newx = xtrain_land)
+  ridge.pred.err.train.land <- mean((ytrain_land - ridge.pred_train_land)^2)
+
+  # # Prédiction sur l'ensemble de test
+  ridge.pred_test_land <- predict(myridge, lambda = mybestlam, newx = xtest_land)
+
+  ## Prédiction totale
+  
+  pred_tot_test <- ridge.pred_test_meteo + ridge.pred_test_land
+  pred_tot_train <- ridge.pred_train_meteo + ridge.pred_train_land
+  
+  if (pollutants == "PM2_5"){
+    pred_tot_test <- ridge.pred_test_meteo
+  }
+  
+  #pred_tot_test <- ridge.pred_test_meteo
+  #pred_tot_train <- ridge.pred_train_meteo
+  
+  # Erreur totzale sur l'ensemble d'apprentissage
+  ridge.train.err_tot <- mean((ytrain_meteo - pred_tot_train)^2)
+  
+  if (pollutants == "NO2"){
+    pred_NO2 <- pred_tot_test
+  }
+  
+  if (pollutants == "PM10"){
+    pred_PM10 <- pred_tot_test
+  }
+  
+  if (pollutants == "PM2_5"){
+    pred_PM2_5 <- pred_tot_test
+  }
+  
+}  
+
+# On rassemble toutes les prédictions en gardant le bon indexage
+total_pred <- rbind(pred_NO2, pred_PM10, pred_PM2_5)
+total_pred <- total_pred[ order(as.numeric(row.names(total_pred))),]
+total_pred <- data.frame(total_pred)
+
+# On s'occupe des prédictions un peu étranges
+total_pred[total_pred < 4] <- 4
+
+total_pred <- round(total_pred)
+
+```
+
+
+## Création de lag variables pour les features météorologiques
+
+Dans un troisième temps, nous avons décidé d'ajouter des lags covariables pour certains features, explicitement: "temperature", "pressure", "cloudcover", "windspeed" moyenné, pour chaque polluant spécifiques sur différentes périodes (pour toutes les zone_id et station_id) : 
+
+* le quart de journée (6 heures)
+
+* la demi-journée (12 heures)
+
+* la journée (24 heures)
+
+* la semaine (168 heures)
+
+* le mois (672 heures)
+
+* le trimestre (3 mois, 1800 heures)
+
+* le semestre (6 mois, 3600 heures)
+
+Nous ne pensions pas initialement ajouter autant de lag, et nous avons commencé par le lag au jour (24h) et à la semaine (168h), mais en ajoutant les lags cités ci-dessus, nous nous sommes rendus que les prédictions s'amélioraient (légèrement). Les résultats obtenus sont les suivants sur le test set du challenge sont les suivants:
+
+| Public score  | Private score | 
+|:-----|---------|
+|338.0 |315.8 | 
+
+```{r pour soumission de nos résultats juste avec météorologiques features 3, include = F}
+library(glmnet)
+for (pollutants in c("NO2", "PM10", "PM2_5")){
+  # On crée les sous-ensemble d'apprentissage par polluants
+  plume_poll_training  <- subset(plume_tot_training[ plume_tot_training$pollutant == pollutants ,], select=-c(pollutant))
+  # Ensemble d'apprentissage pour estimer la concentration
+  plume_meteo_training <- subset(plume_poll_training, select = c(ID, zone_id, station_id, daytime, precipintensity,   precipprobability, temperature,    is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed, TARGET)   )
+  set.seed(myseed)
+  
+  test_meteo <- subset(plume_test.data_final[ plume_test.data_final$pollutant == pollutants, ], select = c(ID, zone_id, station_id, daytime, precipintensity,   precipprobability, temperature,    is_calmday, windbearingsin, windbearingcos, cloudcover, pressure, windspeed))
+  
+  train_meteo = plume_meteo_training
+  
+  #### LAG AU MOIS 
+  # # On crée un nouveau feature:  la season = journée et on ajoute les lags variables (pression, temperature, cloudcover, windspeed)
+  train_meteo[,'season'] <- train_meteo['daytime'] %/% 672 
+  test_meteo[,'season'] <- test_meteo['daytime'] %/% 672 
+  agg_train <- train_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_train <- aggregate(agg_train, by = list(agg_train$season), FUN = mean, na.rm = TRUE)
+  agg_test <- test_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_test <- aggregate(agg_test, by = list(agg_test$season), FUN = mean, na.rm = TRUE)
+  colnames(agg_train) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  colnames(agg_test) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  agg_train <- agg_train[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+  agg_test <- agg_test[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+   
+  train_meteo <- merge(agg_train, train_meteo, by = 'season')
+  test_meteo <- merge(agg_test, test_meteo, by = 'season')
+   
+  train_meteo[, 'temp_diff'] <- train_meteo$temperature - train_meteo$temperature_day
+  test_meteo[, 'temp_diff'] <- test_meteo$temperature - test_meteo$temperature_day
+  train_meteo[, 'press_diff'] <- train_meteo$pressure - train_meteo$pressure_day
+  test_meteo[, 'press_diff'] <- test_meteo$pressure - test_meteo$pressure_day
+  train_meteo[, 'cloudcover_diff'] <- train_meteo$cloudcover - train_meteo$cloudcover_day
+  test_meteo[, 'cloudcover_diff'] <- test_meteo$cloudcover - test_meteo$cloudcover_day
+  train_meteo[, 'windspeed_diff'] <- train_meteo$windspeed - train_meteo$windspeed_day
+  test_meteo[, 'windspeed_diff'] <- test_meteo$windspeed - test_meteo$windspeed_day
+  
+  train_meteo <- subset(train_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  test_meteo <- subset(test_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+
+  ### LAG A LA SEMAINE
+  
+  # # On crée un nouveau feature:  la season = journée et on ajoute les lags variables (pression, temperature, cloudcover, windspeed)
+  train_meteo[,'season'] <- train_meteo['daytime'] %/% 168 
+  test_meteo[,'season'] <- test_meteo['daytime'] %/% 168 
+  agg_train <- train_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_train <- aggregate(agg_train, by = list(agg_train$season), FUN = mean, na.rm = TRUE)
+  agg_test <- test_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_test <- aggregate(agg_test, by = list(agg_test$season), FUN = mean, na.rm = TRUE)
+  colnames(agg_train) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  colnames(agg_test) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  agg_train <- agg_train[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+  agg_test <- agg_test[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+   
+  train_meteo <- merge(agg_train, train_meteo, by = 'season')
+  test_meteo <- merge(agg_test, test_meteo, by = 'season')
+   
+  train_meteo[, 'temp_diff_sem'] <- train_meteo$temperature - train_meteo$temperature_day
+  test_meteo[, 'temp_diff_sem'] <- test_meteo$temperature - test_meteo$temperature_day
+  train_meteo[, 'press_diff_sem'] <- train_meteo$pressure - train_meteo$pressure_day
+  test_meteo[, 'press_diff_sem'] <- test_meteo$pressure - test_meteo$pressure_day
+  train_meteo[, 'cloudcover_diff_sem'] <- train_meteo$cloudcover - train_meteo$cloudcover_day
+  test_meteo[, 'cloudcover_diff_sem'] <- test_meteo$cloudcover - test_meteo$cloudcover_day
+  train_meteo[, 'windspeed_diff_sem'] <- train_meteo$windspeed - train_meteo$windspeed_day
+  test_meteo[, 'windspeed_diff_sem'] <- test_meteo$windspeed - test_meteo$windspeed_day
+  
+  train_meteo <- subset(train_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  test_meteo <- subset(test_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  
+  ### LAG AU 3 MOIS
+  
+  # # On crée un nouveau feature:  la season = journée et on ajoute les lags variables (pression, temperature, cloudcover, windspeed)
+  train_meteo[,'season'] <- train_meteo['daytime'] %/% 1800 
+  test_meteo[,'season'] <- test_meteo['daytime'] %/% 1800 
+  agg_train <- train_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_train <- aggregate(agg_train, by = list(agg_train$season), FUN = mean, na.rm = TRUE)
+  agg_test <- test_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_test <- aggregate(agg_test, by = list(agg_test$season), FUN = mean, na.rm = TRUE)
+  colnames(agg_train) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  colnames(agg_test) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  agg_train <- agg_train[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+  agg_test <- agg_test[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+   
+  train_meteo <- merge(agg_train, train_meteo, by = 'season')
+  test_meteo <- merge(agg_test, test_meteo, by = 'season')
+   
+  train_meteo[, 'temp_diff_seas'] <- train_meteo$temperature - train_meteo$temperature_day
+  test_meteo[, 'temp_diff_seas'] <- test_meteo$temperature - test_meteo$temperature_day
+  train_meteo[, 'press_diff_seas'] <- train_meteo$pressure - train_meteo$pressure_day
+  test_meteo[, 'press_diff_seas'] <- test_meteo$pressure - test_meteo$pressure_day
+  train_meteo[, 'cloudcover_diff_seas'] <- train_meteo$cloudcover - train_meteo$cloudcover_day
+  test_meteo[, 'cloudcover_diff_seas'] <- test_meteo$cloudcover - test_meteo$cloudcover_day
+  train_meteo[, 'windspeed_diff_seas'] <- train_meteo$windspeed - train_meteo$windspeed_day
+  test_meteo[, 'windspeed_diff_seas'] <- test_meteo$windspeed - test_meteo$windspeed_day
+  
+  train_meteo <- subset(train_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  test_meteo <- subset(test_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  
+  ### LAG AU 12h
+  
+  # # On crée un nouveau feature:  la season = journée et on ajoute les lags variables (pression, temperature, cloudcover, windspeed)
+  train_meteo[,'season'] <- train_meteo['daytime'] %/% 12 
+  test_meteo[,'season'] <- test_meteo['daytime'] %/% 12 
+  agg_train <- train_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_train <- aggregate(agg_train, by = list(agg_train$season), FUN = mean, na.rm = TRUE)
+  agg_test <- test_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_test <- aggregate(agg_test, by = list(agg_test$season), FUN = mean, na.rm = TRUE)
+  colnames(agg_train) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  colnames(agg_test) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  agg_train <- agg_train[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+  agg_test <- agg_test[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+   
+  train_meteo <- merge(agg_train, train_meteo, by = 'season')
+  test_meteo <- merge(agg_test, test_meteo, by = 'season')
+   
+  train_meteo[, 'temp_diff_dem'] <- train_meteo$temperature - train_meteo$temperature_day
+  test_meteo[, 'temp_diff_dem'] <- test_meteo$temperature - test_meteo$temperature_day
+  train_meteo[, 'press_diff_dem'] <- train_meteo$pressure - train_meteo$pressure_day
+  test_meteo[, 'press_diff_dem'] <- test_meteo$pressure - test_meteo$pressure_day
+  train_meteo[, 'cloudcover_diff_dem'] <- train_meteo$cloudcover - train_meteo$cloudcover_day
+  test_meteo[, 'cloudcover_diff_dem'] <- test_meteo$cloudcover - test_meteo$cloudcover_day
+  train_meteo[, 'windspeed_diff_dem'] <- train_meteo$windspeed - train_meteo$windspeed_day
+  test_meteo[, 'windspeed_diff_dem'] <- test_meteo$windspeed - test_meteo$windspeed_day
+  
+  train_meteo <- subset(train_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  test_meteo <- subset(test_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  
+   ### LAG AU 6h
+  
+  # # On crée un nouveau feature:  la season = journée et on ajoute les lags variables (pression, temperature, cloudcover, windspeed)
+  train_meteo[,'season'] <- train_meteo['daytime'] %/% 6
+  test_meteo[,'season'] <- test_meteo['daytime'] %/% 6
+  agg_train <- train_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_train <- aggregate(agg_train, by = list(agg_train$season), FUN = mean, na.rm = TRUE)
+  agg_test <- test_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_test <- aggregate(agg_test, by = list(agg_test$season), FUN = mean, na.rm = TRUE)
+  colnames(agg_train) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  colnames(agg_test) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  agg_train <- agg_train[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+  agg_test <- agg_test[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+   
+  train_meteo <- merge(agg_train, train_meteo, by = 'season')
+  test_meteo <- merge(agg_test, test_meteo, by = 'season')
+   
+  train_meteo[, 'temp_diff_6'] <- train_meteo$temperature - train_meteo$temperature_day
+  test_meteo[, 'temp_diff_6'] <- test_meteo$temperature - test_meteo$temperature_day
+  train_meteo[, 'press_diff_6'] <- train_meteo$pressure - train_meteo$pressure_day
+  test_meteo[, 'press_diff_6'] <- test_meteo$pressure - test_meteo$pressure_day
+  train_meteo[, 'cloudcover_diff_6'] <- train_meteo$cloudcover - train_meteo$cloudcover_day
+  test_meteo[, 'cloudcover_diff_6'] <- test_meteo$cloudcover - test_meteo$cloudcover_day
+  train_meteo[, 'windspeed_diff_6'] <- train_meteo$windspeed - train_meteo$windspeed_day
+  test_meteo[, 'windspeed_diff_6'] <- test_meteo$windspeed - test_meteo$windspeed_day
+  
+  train_meteo <- subset(train_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  test_meteo <- subset(test_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  
+   ### LAG AU 3600h
+  
+  # # On crée un nouveau feature:  la season = journée et on ajoute les lags variables (pression, temperature, cloudcover, windspeed)
+  train_meteo[,'season'] <- train_meteo['daytime'] %/% 3600
+  test_meteo[,'season'] <- test_meteo['daytime'] %/% 3600
+  agg_train <- train_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_train <- aggregate(agg_train, by = list(agg_train$season), FUN = mean, na.rm = TRUE)
+  agg_test <- test_meteo[, c('season', 'temperature', 'pressure', 'cloudcover', 'windspeed')]
+  agg_test <- aggregate(agg_test, by = list(agg_test$season), FUN = mean, na.rm = TRUE)
+  colnames(agg_train) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  colnames(agg_test) <- c('agg_ID', 'season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')
+  agg_train <- agg_train[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+  agg_test <- agg_test[, c('season', 'temperature_day', 'pressure_day', 'cloudcover_day', 'windspeed_day')]
+   
+  train_meteo <- merge(agg_train, train_meteo, by = 'season')
+  test_meteo <- merge(agg_test, test_meteo, by = 'season')
+   
+  train_meteo[, 'temp_diff_2h'] <- train_meteo$temperature - train_meteo$temperature_day
+  test_meteo[, 'temp_diff_2h'] <- test_meteo$temperature - test_meteo$temperature_day
+  train_meteo[, 'press_diff_2h'] <- train_meteo$pressure - train_meteo$pressure_day
+  test_meteo[, 'press_diff_2h'] <- test_meteo$pressure - test_meteo$pressure_day
+  train_meteo[, 'cloudcover_diff_2h'] <- train_meteo$cloudcover - train_meteo$cloudcover_day
+  test_meteo[, 'cloudcover_diff_2h'] <- test_meteo$cloudcover - test_meteo$cloudcover_day
+  train_meteo[, 'windspeed_diff_2h'] <- train_meteo$windspeed - train_meteo$windspeed_day
+  test_meteo[, 'windspeed_diff_2h'] <- test_meteo$windspeed - test_meteo$windspeed_day
+  
+  train_meteo <- subset(train_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+  test_meteo <- subset(test_meteo, select =  -c(temperature_day, pressure_day, cloudcover_day, windspeed_day, season))
+
+
+  
+  
+  # Séparer les dataset selon ces indices
+  require(Matrix)
+  
+  xtrain_meteo<-model.matrix(TARGET~.,train_meteo[,-1])[,-1]
+  xtest_meteo <- data.matrix(test_meteo[,-1], rownames.force = NA)
+  ytrain_meteo <- train_meteo[, "TARGET"]
+  
+  # On met en place régression ridge pour estimer la concentration
+
+  # Détermination du lambda par validation croisée
+  mygrid<-c(10^seq(from=-3,to=3,length=100)) #grille de valeurs pour lambda
+  mycv.ridge.out <- cv.glmnet(x = xtrain_meteo,y = ytrain_meteo, alpha = 0,lambda = mygrid)
+  mybestlam <- mycv.ridge.out$lambda.min #lambda choisi par validation croisee
+  myridge <- glmnet(x = xtrain_meteo, y = ytrain_meteo, alpha = 0, lambda = mybestlam)
+
+  # Prédiction sur l'ensemble d'apprentissage
+  ridge.pred_train_meteo <- predict(myridge, lambda = mybestlam, newx = xtrain_meteo)
+  ridge.pred.err.train.meteo <- mean((ytrain_meteo - ridge.pred_train_meteo)^2)
+  
+
+  # Prédiction sur l'ensemble de test
+  ridge.pred_test_meteo <- predict(myridge, lambda = mybestlam, newx = xtest_meteo)
+  
+  
+  pred_tot_test <- ridge.pred_test_meteo
+  pred_tot_train <- ridge.pred_train_meteo
+  
+  # Erreur totzale sur l'ensemble d'apprentissage
+  ridge.train.err_tot <- mean((ytrain_meteo - pred_tot_train)^2)
+  
+  if (pollutants == "NO2"){
+    pred_NO2 <- cbind(pred_tot_test, test_meteo$ID)
+  }
+  
+  if (pollutants == "PM10"){
+    pred_PM10 <- cbind(pred_tot_test, test_meteo$ID)
+  }
+  
+  if (pollutants == "PM2_5"){
+    pred_PM2_5 <- cbind(pred_tot_test, test_meteo$ID)
+  }
+  
+}  
+
+# On rassemble toutes les prédictions en gardant le bon indexage
+total_pred <- rbind(pred_NO2, pred_PM10, pred_PM2_5)
+total_pred <- data.frame(total_pred)
+total_pred <- total_pred[ order(total_pred$V2), ]
+total_pred <- total_pred[, c('s0')]
+
+# On s'occupe des prédictions un peu étranges
+total_pred[total_pred < 4] <- 4
+
+total_pred <- round(total_pred)
+```
+
+On remarque que les résultats obtenus sont relativement meilleurs. Peut-être pas autant qu'espéré vu le nombre de lags qui ont été rajoutés. 
+
+
+# Conclusion 
+
+Ce projet s'est avéré très intéressant et enrichissant, tant du point de vue de la compréhension claire d'un jeu de données, indispensable au bon démarrage d'un projet de machine learning que du point de vue des différentes méthodes statistiques applicables. Pour conclure, je souhaiterais revenir sur deux points plus précisément. 
+Tout d'abord, il semblerait que je n'ai pas réussi à bien prendre en compte les features territoriaux dans mon étude, puisque mes résultats sont meilleurs lorsque je n'en tiens pas compte. Il semble clair qu'ils jouent un rôle particulier avec le feature "station_id", mais je ne vois pas, à ce jour de bonne et différente stratégie pour les relier de façon intelligente. On peut également ajouter qu'il aurait été intéressant de faire une analyse en composantes principales en complément, même si, ici, il semblerait que le modèle soit au contraire plus performant si on lui ajoute/crée de nouveaux features. C'est ce qu'on a pu observé avec les créations de lag features entre autres.
+Enfin, avec plus de temps, j'aurais souhaité me pencher sur l'utilisation de techniques de machine learning plus avancées telles que les SVR (support vector regression) ou les techniques d'ensembling (Random Forest et Gradient Boosting Decision Trees) qui permettent de capturer des non-linéarités, contrairement à ces modèles de régression linéaire plus basiques. 
+
+
+
+```{r final file for testing last, include = F}
+submission <- data.frame(plume_test.data$ID, total_pred)
+colnames(submission) <- c('ID','TARGET')
+write.csv(submission, file = "plume_subsmission_last.csv", row.names = FALSE)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
